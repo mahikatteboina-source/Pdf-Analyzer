@@ -1,32 +1,58 @@
 import streamlit as st
-import numpy as np
 from pypdf import PdfReader
-from collections import Counter
 import math
+from collections import Counter
+import re
 
-def text_to_vector(text):
-    words = text.lower().split()
+# ------------------ Text Utilities ------------------
+
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    return text.split()
+
+def tf(text):
+    words = clean_text(text)
     return Counter(words)
 
-def cosine_sim(a, b):
-    intersection = set(a) & set(b)
-    num = sum(a[x] * b[x] for x in intersection)
-    denom = math.sqrt(sum(v*v for v in a.values())) * math.sqrt(sum(v*v for v in b.values()))
-    return num / denom if denom else 0
+def cosine_similarity(v1, v2):
+    intersection = set(v1.keys()) & set(v2.keys())
+    numerator = sum(v1[x] * v2[x] for x in intersection)
+    denom1 = math.sqrt(sum(v**2 for v in v1.values()))
+    denom2 = math.sqrt(sum(v**2 for v in v2.values()))
+    return numerator / (denom1 * denom2) if denom1 and denom2 else 0.0
 
-st.title("PDF Search (Streamlit Safe)")
+def chunk_text(text, chunk_size=400, overlap=80):
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size - overlap):
+        chunks.append(" ".join(words[i:i + chunk_size]))
+    return chunks
 
-file = st.file_uploader("Upload PDF", type="pdf")
+# ------------------ UI ------------------
 
-if file:
-    reader = PdfReader(file)
-    docs = [p.extract_text() for p in reader.pages if p.extract_text()]
+st.set_page_config(page_title="PDF Analyzer", layout="centered")
+st.title("📄 Smart PDF Analyzer (Fast & Stable)")
 
-    vectors = [text_to_vector(t) for t in docs]
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
-    query = st.text_input("Ask a question")
+if uploaded_file:
+    reader = PdfReader(uploaded_file)
+    full_text = " ".join([page.extract_text() or "" for page in reader.pages])
+
+    chunks = chunk_text(full_text)
+    chunk_vectors = [tf(chunk) for chunk in chunks]
+
+    st.success(f"Processed {len(chunks)} text chunks.")
+
+    query = st.text_input("Ask a question about the document")
+
     if query:
-        q_vec = text_to_vector(query)
-        scores = [cosine_sim(q_vec, v) for v in vectors]
-        best = docs[scores.index(max(scores))]
-        st.write(best)
+        query_vec = tf(query)
+        scores = [cosine_similarity(query_vec, v) for v in chunk_vectors]
+
+        best_index = scores.index(max(scores))
+        best_answer = chunks[best_index]
+
+        st.subheader("📌 Best Match")
+        st.write(best_answer)
