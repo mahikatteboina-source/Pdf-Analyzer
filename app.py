@@ -1,101 +1,44 @@
 import streamlit as st
-from PyPDF2 import PdfReader
-
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_community.llms import HuggingFacePipeline
-from langchain.chains import RetrievalQA
+from langchain_community.document_loaders import PyPDFLoader
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-from transformers import pipeline
+# ---------------- UI ----------------
+st.set_page_config(page_title="PDF Analyzer", layout="wide")
+st.title("📄 PDF Analyzer (No Tokenizers, Streamlit Safe)")
 
-# -----------------------------------
-# STREAMLIT CONFIG
-# -----------------------------------
-st.set_page_config(page_title="PDF Analyzer Chatbot", layout="wide")
-st.title("📄 PDF Analyzer Chatbot (Free & Stable)")
-st.write("Upload PDFs and ask questions based on their content.")
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
-# -----------------------------------
-# PDF UPLOAD
-# -----------------------------------
-pdf_files = st.file_uploader(
-    "Upload PDF files",
-    type=["pdf"],
-    accept_multiple_files=True
-)
+# ---------------- PDF Processing ----------------
+if uploaded_file:
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_file.read())
 
-# -----------------------------------
-# FUNCTIONS
-# -----------------------------------
-def extract_text_from_pdfs(pdfs):
-    text = ""
-    for pdf in pdfs:
-        reader = PdfReader(pdf)
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    return text
+    loader = PyPDFLoader("temp.pdf")
+    pages = loader.load()
 
-
-def split_text(text):
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
         chunk_overlap=150
     )
-    chunks = splitter.split_text(text)
-    return [chunk for chunk in chunks if len(chunk.strip()) > 50]
+    documents = text_splitter.split_documents(pages)
 
+    texts = [doc.page_content for doc in documents]
 
-def create_vector_store(chunks):
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-MiniLM-L3-v2"
-    )
-    return FAISS.from_texts(chunks, embeddings)
+    # Vectorize using TF-IDF (NO tokenizers)
+    vectorizer = TfidfVectorizer(stop_words="english")
+    embeddings = vectorizer.fit_transform(texts)
 
+    st.success("✅ Document processed successfully!")
 
-def create_qa_chain(vector_store):
-    # Local, free, stable LLM (NO API, NO TOKEN)
-    hf_pipeline = pipeline(
-        "text2text-generation",
-        model="google/flan-t5-base",
-        max_length=512,
-        temperature=0.3
-    )
+    # ---------------- QUERY ----------------
+    query = st.text_input("Ask a question about the PDF")
 
-    llm = HuggingFacePipeline(pipeline=hf_pipeline)
+    if query:
+        query_vec = vectorizer.transform([query])
+        similarity = cosine_similarity(query_vec, embeddings)[0]
+        best_idx = similarity.argmax()
 
-    return RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=vector_store.as_retriever()
-    )
-
-# -----------------------------------
-# MAIN LOGIC
-# -----------------------------------
-if pdf_files:
-    with st.spinner("Processing PDFs..."):
-        raw_text = extract_text_from_pdfs(pdf_files)
-
-        if not raw_text.strip():
-            st.error("No text could be extracted from the PDFs.")
-            st.stop()
-
-        chunks = split_text(raw_text)
-        vector_store = create_vector_store(chunks)
-        qa_chain = create_qa_chain(vector_store)
-
-    st.success("PDFs processed successfully!")
-
-    question = st.text_input("Ask a question from the PDFs")
-
-    if question:
-        with st.spinner("Generating answer..."):
-            answer = qa_chain.run(question)
-
-        st.subheader("Answer")
-        st.write(answer)
-
-else:
-    st.info("Please upload at least one PDF to start.")
+        st.subheader("📌 Best Answer")
+        st.write(texts[best_idx])
