@@ -1,44 +1,32 @@
 import streamlit as st
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+from pypdf import PdfReader
+from collections import Counter
+import math
 
-# ---------------- UI ----------------
-st.set_page_config(page_title="PDF Analyzer", layout="wide")
-st.title("📄 PDF Analyzer (No Tokenizers, Streamlit Safe)")
+def text_to_vector(text):
+    words = text.lower().split()
+    return Counter(words)
 
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+def cosine_sim(a, b):
+    intersection = set(a) & set(b)
+    num = sum(a[x] * b[x] for x in intersection)
+    denom = math.sqrt(sum(v*v for v in a.values())) * math.sqrt(sum(v*v for v in b.values()))
+    return num / denom if denom else 0
 
-# ---------------- PDF Processing ----------------
-if uploaded_file:
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.read())
+st.title("PDF Search (Streamlit Safe)")
 
-    loader = PyPDFLoader("temp.pdf")
-    pages = loader.load()
+file = st.file_uploader("Upload PDF", type="pdf")
 
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=150
-    )
-    documents = text_splitter.split_documents(pages)
+if file:
+    reader = PdfReader(file)
+    docs = [p.extract_text() for p in reader.pages if p.extract_text()]
 
-    texts = [doc.page_content for doc in documents]
+    vectors = [text_to_vector(t) for t in docs]
 
-    # Vectorize using TF-IDF (NO tokenizers)
-    vectorizer = TfidfVectorizer(stop_words="english")
-    embeddings = vectorizer.fit_transform(texts)
-
-    st.success("✅ Document processed successfully!")
-
-    # ---------------- QUERY ----------------
-    query = st.text_input("Ask a question about the PDF")
-
+    query = st.text_input("Ask a question")
     if query:
-        query_vec = vectorizer.transform([query])
-        similarity = cosine_similarity(query_vec, embeddings)[0]
-        best_idx = similarity.argmax()
-
-        st.subheader("📌 Best Answer")
-        st.write(texts[best_idx])
+        q_vec = text_to_vector(query)
+        scores = [cosine_sim(q_vec, v) for v in vectors]
+        best = docs[scores.index(max(scores))]
+        st.write(best)
